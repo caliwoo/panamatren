@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panama Railway Cost Calculator - Auto Topography & Surcharge</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+     crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+     crossorigin=""></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overscroll-behavior: none; /* Prevent pull-to-refresh/overscroll effects */
+        }
+        #mapContainer {
+            position: relative;
+            width: 100%;
+            height: 450px; 
+            max-width: 800px;
+            margin: 0 auto;
+            border: 2px solid #ccc;
+            border-radius: 8px;
+            overflow: hidden; 
+            cursor: crosshair; 
+            touch-action: none; /* Important for preventing default touch actions like scrolling when interacting with map */
+        }
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .btn-primary {
+            background-color: #2563eb;
+            color: white;
+        }
+        .btn-primary:hover {
+            background-color: #1d4ed8;
+        }
+        .btn-secondary {
+            background-color: #6b7280;
+            color: white;
+        }
+        .btn-secondary:hover {
+            background-color: #4b5563;
+        }
+        #messageBox {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 1050; 
+            display: none;
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+        }
+        .leaflet-popup-content-wrapper {
+            border-radius: 0.5rem;
+        }
+        .leaflet-popup-content {
+            font-size: 0.875rem;
+        }
+        .info-label {
+            font-size: 0.875rem; /* text-sm */
+            font-weight: 500; /* medium */
+            color: #374151; /* gray-700 */
+        }
+        .info-value {
+            font-weight: 600; /* semibold */
+            color: #1D4ED8; /* blue-700 */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center justify-center p-4">
+
+    <div id="messageBox"></div>
+
+    <div class="w-full max-w-4xl bg-white p-6 rounded-xl shadow-2xl">
+        <header class="mb-6 text-center">
+            <h1 class="text-3xl font-bold text-gray-800">Panama Railway Cost Calculator</h1>
+            <p class="text-gray-600 mt-2">Draw a route (click/touch & drag). Tunnel/bridge lengths are auto-estimated. A 50% surcharge is applied.</p>
+        </header>
+
+        <div id="mapContainer">
+            </div>
+
+        <div class="mt-6 p-6 bg-gray-50 rounded-lg shadow">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4 mb-6">
+                <div>
+                    <p class="info-label">Total Drawn Distance:</p>
+                    <p><span id="distanceDisplay" class="text-lg font-bold text-blue-600">0.00 km</span></p>
+                </div>
+                <div>
+                    <p class="info-label">Est. Tunnel Length (auto):</p>
+                    <p><span id="tunnelLengthDisplay" class="text-lg font-bold text-gray-700">0.00 km</span></p>
+                </div>
+                <div>
+                    <p class="info-label">Est. Bridge Length (auto):</p>
+                    <p><span id="bridgeLengthDisplay" class="text-lg font-bold text-gray-700">0.00 km</span></p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+                 <div>
+                    <p class="mt-1 text-xl">Total Estimated Cost (incl. surcharge): <span id="costDisplay" class="font-bold text-green-600">$0.00</span></p>
+                </div>
+                <div class="flex flex-col md:flex-row justify-end items-center space-y-2 md:space-y-0 md:space-x-3">
+                     <button id="calculateButton" class="btn btn-primary w-full md:w-auto">Calculate Cost</button>
+                    <button id="clearButton" class="btn btn-secondary w-full md:w-auto">Clear Route</button>
+                </div>
+            </div>
+            <div class="text-xs text-gray-500 mt-4">
+                <p class="font-semibold">Cost Assumptions:</p>
+                <ul class="list-disc list-inside ml-2">
+                    <li>Standard Track: <span id="costPerKmInfo"></span></li>
+                    <li>Tunnel: <span id="costPerKmTunnelInfo"></span></li>
+                    <li>Bridge: <span id="costPerKmBridgeInfo"></span></li>
+                    <li>Panama Surcharge: <span id="surchargeInfo"></span> on subtotal.</li>
+                </ul>
+                <p class="font-semibold mt-2">Topography Heuristic (Simplified):</p>
+                 <ul class="list-disc list-inside ml-2">
+                    <li>Pacific Coastal (South of <span id="pacificLatThresholdDisplay"></span>&deg;N): Flat</li>
+                    <li>Caribbean Coastal (North of <span id="caribbeanLatThresholdDisplay"></span>&deg;N): Flat</li>
+                    <li>Inland/Mountainous (Between thresholds): <span id="inlandTunnelPercentDisplay"></span>% tunnels, <span id="inlandBridgePercentDisplay"></span>% bridges of segment length.</li>
+                </ul>
+                <p class="mt-1">This is a simplified model for estimation purposes.</p>
+            </div>
+        </div>
+         <footer class="text-center mt-8 text-sm text-gray-500">
+            <p>Panama Railway Planner &copy; 2025</p>
+        </footer>
+    </div>
+
+    <script>
+        // --- Configuration ---
+        const COST_PER_KM_STANDARD = 10000000; // 10 million USD per km
+        const COST_PER_KM_TUNNEL = 50000000;   // 50 million USD per km 
+        const COST_PER_KM_BRIDGE = 30000000;   // 30 million USD per km 
+        const PANAMA_COST_SURCHARGE = 0.50;    // 50% surcharge for higher costs in Panama
+
+        // --- Topography Heuristic Configuration ---
+        const PACIFIC_COAST_LAT_THRESHOLD = 8.2;  
+        const CARIBBEAN_COAST_LAT_THRESHOLD = 9.2; 
+        const INLAND_TUNNEL_PERCENTAGE = 0.05; 
+        const INLAND_BRIDGE_PERCENTAGE = 0.03; 
+
+        const PANAMA_CENTER_LATLNG = [8.5380, -80.7821];
+        const INITIAL_ZOOM_LEVEL = 7;
+
+        // --- DOM Elements ---
+        const distanceDisplay = document.getElementById('distanceDisplay');
+        const costDisplay = document.getElementById('costDisplay');
+        const tunnelLengthDisplay = document.getElementById('tunnelLengthDisplay');
+        const bridgeLengthDisplay = document.getElementById('bridgeLengthDisplay');
+        
+        const clearButton = document.getElementById('clearButton');
+        const calculateButton = document.getElementById('calculateButton');
+        
+        const costPerKmInfo = document.getElementById('costPerKmInfo');
+        const costPerKmTunnelInfo = document.getElementById('costPerKmTunnelInfo');
+        const costPerKmBridgeInfo = document.getElementById('costPerKmBridgeInfo');
+        const surchargeInfo = document.getElementById('surchargeInfo');
+
+        const pacificLatThresholdDisplay = document.getElementById('pacificLatThresholdDisplay');
+        const caribbeanLatThresholdDisplay = document.getElementById('caribbeanLatThresholdDisplay');
+        const inlandTunnelPercentDisplay = document.getElementById('inlandTunnelPercentDisplay');
+        const inlandBridgePercentDisplay = document.getElementById('inlandBridgePercentDisplay');
+        
+        const messageBox = document.getElementById('messageBox');
+        const mapContainer = document.getElementById('mapContainer'); 
+
+        // --- Leaflet Map & Interaction State ---
+        let map; 
+        let isLeftDrawing = false; 
+        let pathPoints = []; 
+        let drawnPolyline = null; 
+
+        // --- Helper to manage map's tap state during drawing ---
+        function updateMapTapState() {
+            if (map && map.tap) { // Ensure map and map.tap are initialized
+                if (isLeftDrawing) { 
+                    map.tap.disable(); 
+                } else {
+                    map.tap.enable();
+                }
+            }
+        }
+        
+        // --- Message Function ---
+        function showMessage(message, type = 'error', duration = 3000) {
+            messageBox.textContent = message;
+            messageBox.classList.remove('bg-green-500', 'bg-red-500');
+            if (type === 'success') {
+                messageBox.classList.add('bg-green-500');
+            } else { 
+                messageBox.classList.add('bg-red-500');
+            }
+            
+            messageBox.style.display = 'block';
+            anime({
+                targets: messageBox,
+                opacity: [0, 1],
+                duration: 500,
+                easing: 'easeOutQuad',
+                complete: () => {
+                    setTimeout(() => {
+                        anime({
+                            targets: messageBox,
+                            opacity: 0,
+                            duration: 500,
+                            easing: 'easeInQuad',
+                            complete: () => {
+                                messageBox.style.display = 'none';
+                            }
+                        });
+                    }, duration);
+                }
+            });
+        }
+        
+        // --- Map Interaction Event Handlers ---
+        function handleMapMouseDown(event) { // event is L.LeafletMouseEvent
+            const oe = event.originalEvent; // Underlying DOM event (MouseEvent or TouchEvent)
+            let startDraw = false;
+
+            if (oe instanceof MouseEvent && oe.button === 0) { // Left mouse click
+                startDraw = true;
+            } else if (oe instanceof TouchEvent) { // Any touch start on the map
+                startDraw = true;
+                // Prevent default touch actions like page scrolling when drawing starts on the map
+                oe.preventDefault(); 
+            }
+
+            if (startDraw) {
+                if (drawnPolyline) {
+                    map.removeLayer(drawnPolyline);
+                    drawnPolyline = null;
+                }
+                pathPoints = [];
+                isLeftDrawing = true;
+                pathPoints.push(event.latlng); 
+                drawnPolyline = L.polyline(pathPoints, { 
+                    color: '#007bff', weight: 4, opacity: 0.7      
+                }).addTo(map);
+                updateMapTapState(); 
+            }
+        }
+
+        function handleMapMouseMove(event) { // event is L.LeafletMouseEvent
+            if (isLeftDrawing) {
+                pathPoints.push(event.latlng);
+                if (drawnPolyline) {
+                    drawnPolyline.addLatLng(event.latlng);
+                }
+                // Prevent default for touchmove to avoid scrolling the page while drawing
+                if (event.originalEvent instanceof TouchEvent) {
+                    event.originalEvent.preventDefault();
+                }
+            }
+        }
+
+        function handleGlobalPointerUp(event) { // Handles both mouseup and touchend/touchcancel
+            if (!isLeftDrawing) {
+                return; // Only proceed if drawing was active
+            }
+
+            let isRelevantMouseUp = (event.type === 'mouseup' && event.button === 0);
+            // For touch, touchend or touchcancel signifies the end of interaction
+            let isRelevantTouchEnd = (event.type === 'touchend' || event.type === 'touchcancel'); 
+
+            if (isRelevantMouseUp || isRelevantTouchEnd) {
+                isLeftDrawing = false;
+                updateMapTapState(); 
+                if (pathPoints.length > 1) {
+                    calculateAndDisplay();
+                }
+            }
+        }
+
+        // --- Calculation and Display Functions ---
+        function calculateGeoDistance() {
+            let totalDistanceMeters = 0;
+            if (pathPoints.length < 2) return 0;
+            for (let i = 0; i < pathPoints.length - 1; i++) {
+                totalDistanceMeters += map.distance(pathPoints[i], pathPoints[i + 1]);
+            }
+            return totalDistanceMeters / 1000; 
+        }
+
+        function estimateTopographyFeatures(totalPathPoints) {
+            let estimatedTunnelKm = 0;
+            let estimatedBridgeKm = 0;
+
+            if (totalPathPoints.length < 2) {
+                return { tunnelKm: 0, bridgeKm: 0 };
+            }
+
+            for (let i = 0; i < totalPathPoints.length - 1; i++) {
+                const p1 = totalPathPoints[i];
+                const p2 = totalPathPoints[i + 1];
+                const segmentMidLat = (p1.lat + p2.lat) / 2;
+                const segmentLengthKm = map.distance(p1, p2) / 1000;
+
+                const isCoastal = segmentMidLat < PACIFIC_COAST_LAT_THRESHOLD || 
+                                  segmentMidLat > CARIBBEAN_COAST_LAT_THRESHOLD;
+
+                if (!isCoastal) { 
+                    estimatedTunnelKm += segmentLengthKm * INLAND_TUNNEL_PERCENTAGE;
+                    estimatedBridgeKm += segmentLengthKm * INLAND_BRIDGE_PERCENTAGE;
+                }
+            }
+            return { tunnelKm: estimatedTunnelKm, bridgeKm: estimatedBridgeKm };
+        }
+
+
+        function calculateAndDisplay() {
+            const drawnDistanceKm = calculateGeoDistance();
+            
+            if (drawnDistanceKm < 0.01 && pathPoints.length < 2) { 
+                showMessage("Please draw a route on the map first.", 'error');
+                distanceDisplay.textContent = "0.00 km";
+                tunnelLengthDisplay.textContent = "0.00 km";
+                bridgeLengthDisplay.textContent = "0.00 km";
+                costDisplay.textContent = "$0.00";
+                return;
+            }
+
+            const topographyFeatures = estimateTopographyFeatures(pathPoints);
+            const tunnelLengthKm = topographyFeatures.tunnelKm;
+            const bridgeLengthKm = topographyFeatures.bridgeKm;
+
+            const standardTrackLengthKm = Math.max(0, drawnDistanceKm - tunnelLengthKm - bridgeLengthKm);
+
+            const costStandardTrack = standardTrackLengthKm * COST_PER_KM_STANDARD;
+            const costTunnels = tunnelLengthKm * COST_PER_KM_TUNNEL;
+            const costBridges = bridgeLengthKm * COST_PER_KM_BRIDGE;
+            
+            const subTotalCost = costStandardTrack + costTunnels + costBridges;
+            const surchargeAmount = subTotalCost * PANAMA_COST_SURCHARGE;
+            const grandTotalCost = subTotalCost + surchargeAmount;
+
+
+            // Animate displays
+            anime({
+                targets: distanceDisplay,
+                innerHTML: [parseFloat(distanceDisplay.textContent.replace(/[^0-9.]/g, '')) || 0, drawnDistanceKm.toFixed(2)],
+                round: 100, easing: 'easeOutExpo', duration: 700,
+                update: (anim) => distanceDisplay.innerHTML = parseFloat(anim.animations[0].currentValue).toFixed(2) + " km"
+            });
+            anime({
+                targets: tunnelLengthDisplay,
+                innerHTML: [parseFloat(tunnelLengthDisplay.textContent.replace(/[^0-9.]/g, '')) || 0, tunnelLengthKm.toFixed(2)],
+                round: 100, easing: 'easeOutExpo', duration: 700,
+                update: (anim) => tunnelLengthDisplay.innerHTML = parseFloat(anim.animations[0].currentValue).toFixed(2) + " km"
+            });
+            anime({
+                targets: bridgeLengthDisplay,
+                innerHTML: [parseFloat(bridgeLengthDisplay.textContent.replace(/[^0-9.]/g, '')) || 0, bridgeLengthKm.toFixed(2)],
+                round: 100, easing: 'easeOutExpo', duration: 700,
+                update: (anim) => bridgeLengthDisplay.innerHTML = parseFloat(anim.animations[0].currentValue).toFixed(2) + " km"
+            });
+            
+            const currentCost = parseFloat(costDisplay.textContent.replace(/[^0-9$.]/g, '').replace(/,/g, '')) || 0;
+            anime({
+                targets: { value: currentCost }, value: grandTotalCost,
+                round: 1, easing: 'easeOutExpo', duration: 1000,
+                update: (anim) => costDisplay.innerHTML = "$" + parseFloat(anim.animations[0].currentValue).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+            });
+        }
+
+        function clearAll() {
+            if (drawnPolyline) {
+                map.removeLayer(drawnPolyline);
+                drawnPolyline = null;
+            }
+            pathPoints = [];
+            isLeftDrawing = false; 
+            updateMapTapState(); 
+
+            const resetAnimation = (targetElement, unit = "km") => {
+                anime({
+                    targets: targetElement,
+                    opacity: [1,0],
+                    duration: 150, easing: 'linear',
+                    complete: () => {
+                         targetElement.textContent = "0.00 " + unit;
+                         anime({ targets: targetElement, opacity: [0,1], duration: 150, easing: 'linear' });
+                    }
+                });
+            };
+            
+            resetAnimation(distanceDisplay);
+            resetAnimation(tunnelLengthDisplay);
+            resetAnimation(bridgeLengthDisplay);
+            
+            anime({
+                targets: costDisplay,
+                opacity: [1,0],
+                duration: 150, easing: 'linear',
+                complete: () => {
+                     costDisplay.textContent = "$0.00";
+                     anime({ targets: costDisplay, opacity: [0,1], duration: 150, easing: 'linear' });
+                }
+            });
+            showMessage("Route cleared!", 'success', 1500);
+        }
+
+        // --- Map Initialization ---
+        function initMap() {
+            map = L.map('mapContainer', {
+                center: PANAMA_CENTER_LATLNG, zoom: INITIAL_ZOOM_LEVEL,
+                // Disable most default map interactions to favor custom drawing
+                zoomControl: false, scrollWheelZoom: false, doubleClickZoom: false,
+                touchZoom: false, dragging: false, boxZoom: false, keyboard: false,
+                tap: true // Explicitly enable tap for mobile, so map.tap handler is initialized
+            });
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 18, 
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+
+            L.marker([8.9824, -79.5277], { title: "Panama City" }).addTo(map).bindPopup("<b>Panama City</b>");
+            L.marker([8.4289, -82.4289], { title: "David, Chiriquí" }).addTo(map).bindPopup("<b>David, Chiriquí</b>");
+
+            // Leaflet's map events 'mousedown' and 'mousemove' alias touch events (touchstart, touchmove)
+            map.on('mousedown', handleMapMouseDown);
+            map.on('mousemove', handleMapMouseMove); 
+            
+            // Global listeners for pointer up (mouse) and touch end/cancel
+            window.addEventListener('mouseup', handleGlobalPointerUp);
+            window.addEventListener('touchend', handleGlobalPointerUp);
+            window.addEventListener('touchcancel', handleGlobalPointerUp); // Handle cases like touch being interrupted
+
+            // Prevent context menu on map (e.g., long press on mobile)
+            mapContainer.addEventListener('contextmenu', (e) => e.preventDefault());
+        }
+        
+        // --- Event Listeners for Buttons ---
+        clearButton.addEventListener('click', clearAll);
+        calculateButton.addEventListener('click', calculateAndDisplay);
+        
+        // --- Initialization on Window Load ---
+        window.onload = () => {
+            initMap();
+            costPerKmInfo.textContent = `$${COST_PER_KM_STANDARD.toLocaleString('en-US')} USD per km`;
+            costPerKmTunnelInfo.textContent = `$${COST_PER_KM_TUNNEL.toLocaleString('en-US')} USD per km`;
+            costPerKmBridgeInfo.textContent = `$${COST_PER_KM_BRIDGE.toLocaleString('en-US')} USD per km`;
+            surchargeInfo.textContent = `${(PANAMA_COST_SURCHARGE * 100).toFixed(0)}%`;
+            
+            pacificLatThresholdDisplay.textContent = PACIFIC_COAST_LAT_THRESHOLD.toFixed(1);
+            caribbeanLatThresholdDisplay.textContent = CARIBBEAN_COAST_LAT_THRESHOLD.toFixed(1);
+            inlandTunnelPercentDisplay.textContent = (INLAND_TUNNEL_PERCENTAGE * 100).toFixed(0);
+            inlandBridgePercentDisplay.textContent = (INLAND_BRIDGE_PERCENTAGE * 100).toFixed(0);
+        };
+    </script>
+</body>
+</html>
